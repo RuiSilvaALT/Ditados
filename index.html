@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ditado Rítmico</title>
+<style>
+  body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f0f8ff; }
+  h1 { color: #3333aa; }
+  #estado { margin: 8px 0 16px; }
+  .linha { display: flex; justify-content: center; gap: 15px; margin-top: 12px; flex-wrap: wrap; }
+  .celula {
+    width: 150px; height: 150px; object-fit: contain; border-radius: 10px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    opacity: 0.15; transition: opacity 0.2s, transform 0.2s;
+    background: rgba(255,255,255,0.35);
+  }
+  .ativa { opacity: 1; transform: scale(1.06); }
+  button {
+    font-size: 18px; padding: 12px 18px; margin: 6px;
+    cursor: pointer; border-radius: 10px; background-color: #3333aa;
+    color: white; border: none;
+  }
+  button:hover { background-color: #5555cc; }
+  button:disabled { background: #999; cursor: not-allowed; }
+</style>
+</head>
+<body>
+
+<h1>Ditado Rítmico</h1>
+<p id="estado">A carregar sons…</p>
+
+<div class="linha">
+  <img id="img0" class="celula" alt="">
+  <img id="img1" class="celula" alt="">
+  <img id="img2" class="celula" alt="">
+  <img id="img3" class="celula" alt="">
+</div>
+
+<br>
+
+<button id="startBtn" onclick="iniciarDitado()" disabled>Iniciar Ditado</button>
+<button id="reouvirBtn" onclick="reouvir()" style="display:none;">Ouvir novamente</button>
+<button id="revelarBtn" onclick="mostrarResolucao()" style="display:none;">Mostrar resolução</button>
+
+<script>
+const AudioContext = window.AudioContext || window.webkitAudioContext;
+let audioCtx;
+
+/* ========= CÉLULAS ========= */
+const celulaEspecial = {
+  id: 1,
+  img: "imagens/img1.png",
+  som: "sons/som1.mp3",
+  duracao: 1.5
+};
+
+// célula 3 = esta (nunca pode ser a primeira)
+const CELULA_PROIBIDA_PRIMEIRA_ID = 3;
+
+const opcoesNormais = [
+  { id: 2, img:"imagens/img2.png", som:"sons/som2.mp3", duracao: 1 },
+  { id: 3, img:"imagens/img3.png", som:"sons/som3.mp3", duracao: 1 },
+  { id: 4, img:"imagens/img4.png", som:"sons/som4.mp3", duracao: 1 },
+  { id: 5, img:"imagens/img5.png", som:"sons/som5.mp3", duracao: 1 },
+  { id: 6, img:"imagens/img6.png", som:"sons/som6.mp3", duracao: 1 },
+  { id: 7, img:"imagens/img7.png", som:"sons/som7.mp3", duracao: 1 },
+  { id: 8, img:"imagens/img8.png", som:"sons/som8.mp3", duracao: 1 },
+  { id: 9, img:"imagens/img9.png", som:"sons/som9.mp3", duracao: 1 },
+  { id: 10, img:"imagens/img10.png", som:"sons/som10.mp3", duracao: 1 }
+];
+
+/* ========= STATE ========= */
+let sequencia = [];
+let pronto = false;
+let resolucaoMostrada = false;
+let agendados = [];
+
+const startBtn = document.getElementById("startBtn");
+const reouvirBtn = document.getElementById("reouvirBtn");
+const revelarBtn = document.getElementById("revelarBtn");
+const estado = document.getElementById("estado");
+
+/* ========= LOAD AUDIO ========= */
+async function carregarSom(ctx, url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("Falha a carregar: " + url);
+  const buf = await res.arrayBuffer();
+  return await ctx.decodeAudioData(buf);
+}
+
+async function carregarTudo() {
+  try {
+    audioCtx = new AudioContext();
+    celulaEspecial.buffer = await carregarSom(audioCtx, celulaEspecial.som);
+    for (const c of opcoesNormais) c.buffer = await carregarSom(audioCtx, c.som);
+
+    pronto = true;
+    estado.textContent = "Pronto ✔️";
+    startBtn.disabled = false;
+  } catch (e) {
+    estado.textContent = "Erro ao carregar sons. Confirma pastas/nomes e se está em HTTP (GitHub Pages).";
+    console.error(e);
+  }
+}
+carregarTudo();
+
+/* ========= VISUAL ========= */
+function limparVisual() {
+  for (let i = 0; i < 4; i++) {
+    const img = document.getElementById("img" + i);
+    img.src = "";
+    img.classList.remove("ativa");
+  }
+}
+
+function esconderBotoesDepoisDeIniciar() {
+  reouvirBtn.style.display = "none";
+  revelarBtn.style.display = "none";
+}
+
+function mostrarBotoesDepoisDeTocar() {
+  reouvirBtn.style.display = "inline-block";
+  revelarBtn.style.display = "inline-block";
+}
+
+/* ========= PARAR SOMS (se clicar a meio) ========= */
+function pararAgendados() {
+  agendados.forEach(src => { try { src.stop(); } catch (_) {} });
+  agendados = [];
+}
+
+/* ========= HELPERS DE SORTEIO ========= */
+function escolherAleatoria(lista) {
+  return lista[Math.floor(Math.random() * lista.length)];
+}
+
+// escolhe uma normal garantindo que não repete (remove do array)
+function tirarAleatoria(array) {
+  const idx = Math.floor(Math.random() * array.length);
+  return array.splice(idx, 1)[0];
+}
+
+/* ========= GERAR SEQUÊNCIA COM REGRAS =========
+   - Se sai especial: 2 normais + especial no fim
+   - Caso contrário: 4 normais
+   - Regra extra: célula 3 (id=3) NUNCA pode ser a primeira
+*/
+function gerarSequencia() {
+  const especialSai = Math.random() < 0.5;
+
+  if (especialSai) {
+    const copia = [...opcoesNormais];
+
+    // PRIMEIRA normal: filtrar para excluir célula 3
+    const primeiraPool = copia.filter(c => c.id !== CELULA_PROIBIDA_PRIMEIRA_ID);
+    const primeira = escolherAleatoria(primeiraPool);
+
+    // remover a escolhida da cópia
+    copia.splice(copia.findIndex(x => x.id === primeira.id), 1);
+
+    // segunda normal: qualquer restante
+    const segunda = tirarAleatoria(copia);
+
+    return [primeira, segunda, celulaEspecial];
+  } else {
+    const copia = [...opcoesNormais];
+
+    // PRIMEIRA normal: filtrar para excluir célula 3
+    const primeiraPool = copia.filter(c => c.id !== CELULA_PROIBIDA_PRIMEIRA_ID);
+    const primeira = escolherAleatoria(primeiraPool);
+    copia.splice(copia.findIndex(x => x.id === primeira.id), 1);
+
+    // restantes 3 normais: aleatórias sem repetir
+    const segunda = tirarAleatoria(copia);
+    const terceira = tirarAleatoria(copia);
+    const quarta = tirarAleatoria(copia);
+
+    return [primeira, segunda, terceira, quarta];
+  }
+}
+
+/* ========= TOCAR COM AGENDA ========= */
+function tocarSequencia() {
+  if (!sequencia.length) return;
+
+  pararAgendados();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+
+  let t = audioCtx.currentTime + 0.12;
+
+  sequencia.forEach(c => {
+    const src = audioCtx.createBufferSource();
+    src.buffer = c.buffer;
+    src.connect(audioCtx.destination);
+    src.start(t);
+    agendados.push(src);
+    t += c.duracao;
+  });
+
+  const total = sequencia.reduce((s, c) => s + c.duracao, 0);
+  setTimeout(() => {
+    mostrarBotoesDepoisDeTocar();
+    startBtn.textContent = resolucaoMostrada ? "Novo ditado" : "Iniciar Ditado";
+  }, Math.ceil((total + 0.2) * 1000));
+}
+
+/* ========= AÇÕES ========= */
+function iniciarDitado() {
+  if (!pronto) return;
+
+  pararAgendados();
+
+  // se a resolução estava visível, desaparece ao iniciar novo ditado
+  if (resolucaoMostrada) {
+    limparVisual();
+    resolucaoMostrada = false;
+  }
+
+  esconderBotoesDepoisDeIniciar();
+
+  sequencia = gerarSequencia();
+
+  // ditado: não mostrar nada enquanto toca
+  limparVisual();
+
+  startBtn.textContent = "A tocar…";
+  startBtn.disabled = true;
+
+  tocarSequencia();
+
+  const total = sequencia.reduce((s, c) => s + c.duracao, 0);
+  setTimeout(() => {
+    startBtn.disabled = false;
+    startBtn.textContent = "Iniciar Ditado";
+  }, Math.ceil((total + 0.25) * 1000));
+}
+
+function reouvir() {
+  if (!sequencia.length) return;
+
+  pararAgendados();
+  esconderBotoesDepoisDeIniciar();
+
+  // continua sem mostrar
+  limparVisual();
+
+  startBtn.textContent = "A tocar…";
+  startBtn.disabled = true;
+
+  tocarSequencia();
+
+  const total = sequencia.reduce((s, c) => s + c.duracao, 0);
+  setTimeout(() => {
+    startBtn.disabled = false;
+    startBtn.textContent = "Iniciar Ditado";
+  }, Math.ceil((total + 0.25) * 1000));
+}
+
+function mostrarResolucao() {
+  pararAgendados();
+
+  limparVisual();
+  sequencia.forEach((c, i) => {
+    const img = document.getElementById("img" + i);
+    img.src = c.img;
+    img.classList.add("ativa");
+  });
+
+  resolucaoMostrada = true;
+  startBtn.textContent = "Novo ditado";
+}
+</script>
+
+</body>
+</html>
