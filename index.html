@@ -6,66 +6,38 @@
 <title>Ditado Rítmico</title>
 
 <style>
-  body {
-    font-family: Arial, sans-serif;
-    text-align: center;
-    padding: 20px;
-    background: #f0f8ff;
-  }
+  body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f0f8ff; }
   h1 { color: #3333aa; }
-
   #estado { margin: 8px 0 16px; }
 
-  .linha {
-    display: flex;
-    justify-content: center;
-    gap: 15px;
-    margin-top: 12px;
-    flex-wrap: wrap;
-  }
-
+  .linha { display: flex; justify-content: center; gap: 15px; margin-top: 12px; flex-wrap: wrap; }
   .celula {
-    width: 150px;
-    height: 150px;
-    object-fit: contain;
-    border-radius: 10px;
+    width: 150px; height: 150px; object-fit: contain; border-radius: 10px;
     box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    opacity: 0.15;
-    transition: opacity 0.2s, transform 0.2s;
+    opacity: 0.15; transition: opacity 0.2s, transform 0.2s;
     background: rgba(255,255,255,0.35);
   }
-
-  .ativa {
-    opacity: 1;
-    transform: scale(1.06);
-  }
+  .ativa { opacity: 1; transform: scale(1.06); }
 
   button {
-    font-size: 18px;
-    padding: 12px 18px;
-    margin: 6px;
-    cursor: pointer;
-    border-radius: 10px;
-    background-color: #3333aa;
-    color: white;
-    border: none;
+    font-size: 18px; padding: 12px 18px; margin: 6px;
+    cursor: pointer; border-radius: 10px;
+    background-color: #3333aa; color: white; border: none;
   }
-
   button:hover { background-color: #5555cc; }
   button:disabled { background: #999; cursor: not-allowed; }
 </style>
 </head>
 
 <body>
-
 <h1>Ditado Rítmico</h1>
 <p id="estado">A carregar sons…</p>
 
 <div class="linha">
-  <img id="img0" class="celula">
-  <img id="img1" class="celula">
-  <img id="img2" class="celula">
-  <img id="img3" class="celula">
+  <img id="img0" class="celula" alt="">
+  <img id="img1" class="celula" alt="">
+  <img id="img2" class="celula" alt="">
+  <img id="img3" class="celula" alt="">
 </div>
 
 <br>
@@ -76,13 +48,14 @@
 
 <script>
 /* ==========================
-   PULSAÇÃO
+   PULSAÇÃO / METRÓNOMO
 ========================== */
 const BPM = 65;
-const DURACAO_TEMPO = 60 / BPM;
+const DURACAO_TEMPO = 60 / BPM;   // segundos por tempo
+const COUNT_IN = 4;               // 4 cliques antes de cada reprodução
 
 /* ==========================
-   AUDIO
+   WEB AUDIO
 ========================== */
 const AudioContext = window.AudioContext || window.webkitAudioContext;
 let audioCtx;
@@ -94,30 +67,33 @@ const celulaEspecial = {
   id: 1,
   img: "imagens/img1.png",
   som: "sons/som1.mp3",
-  tempos: 2   // única célula que vale 2 tempos
+  tempos: 2 // única que vale 2
 };
 
-const CELULA_PROIBIDA_PRIMEIRA_ID = 3;
+// nunca começar com 3 nem 8
+const CELULAS_PROIBIDAS_PRIMEIRA = [3, 8];
 
 const opcoesNormais = [
-  { id: 2, img:"imagens/img2.png", som:"sons/som2.mp3", tempos: 1 },
-  { id: 3, img:"imagens/img3.png", som:"sons/som3.mp3", tempos: 1 },
-  { id: 4, img:"imagens/img4.png", som:"sons/som4.mp3", tempos: 1 },
-  { id: 5, img:"imagens/img5.png", som:"sons/som5.mp3", tempos: 1 },
-  { id: 6, img:"imagens/img6.png", som:"sons/som6.mp3", tempos: 1 },
-  { id: 7, img:"imagens/img7.png", som:"sons/som7.mp3", tempos: 1 },
-  { id: 8, img:"imagens/img8.png", som:"sons/som8.mp3", tempos: 1 },
-  { id: 9, img:"imagens/img9.png", som:"sons/som9.mp3", tempos: 1 },
+  { id: 2,  img:"imagens/img2.png",  som:"sons/som2.mp3",  tempos: 1 },
+  { id: 3,  img:"imagens/img3.png",  som:"sons/som3.mp3",  tempos: 1 },
+  { id: 4,  img:"imagens/img4.png",  som:"sons/som4.mp3",  tempos: 1 },
+  { id: 5,  img:"imagens/img5.png",  som:"sons/som5.mp3",  tempos: 1 },
+  { id: 6,  img:"imagens/img6.png",  som:"sons/som6.mp3",  tempos: 1 },
+  { id: 7,  img:"imagens/img7.png",  som:"sons/som7.mp3",  tempos: 1 },
+  { id: 8,  img:"imagens/img8.png",  som:"sons/som8.mp3",  tempos: 1 },
+  { id: 9,  img:"imagens/img9.png",  som:"sons/som9.mp3",  tempos: 1 },
   { id: 10, img:"imagens/img10.png", som:"sons/som10.mp3", tempos: 1 }
 ];
 
 /* ==========================
-   STATE
+   STATE / UI
 ========================== */
-let sequencia = [];
+let sequencia = [];           // sequência atual (para reouvir)
 let pronto = false;
 let resolucaoMostrada = false;
-let agendados = [];
+let agendados = [];           // BufferSource agendados (para parar)
+let clickBuffer = null;       // som do clique do metrónomo
+let isPlaying = false;
 
 const startBtn = document.getElementById("startBtn");
 const reouvirBtn = document.getElementById("reouvirBtn");
@@ -129,27 +105,51 @@ const estado = document.getElementById("estado");
 ========================== */
 async function carregarSom(ctx, url) {
   const res = await fetch(url);
+  if (!res.ok) throw new Error("Falha a carregar: " + url);
   const buf = await res.arrayBuffer();
   return await ctx.decodeAudioData(buf);
 }
 
-async function carregarTudo() {
-  audioCtx = new AudioContext();
-
-  celulaEspecial.buffer = await carregarSom(audioCtx, celulaEspecial.som);
-  for (const c of opcoesNormais) {
-    c.buffer = await carregarSom(audioCtx, c.som);
+// cria um "click" simples (sem ficheiro) para o metrónomo
+function criarClickBuffer(ctx) {
+  const sr = ctx.sampleRate;
+  const dur = 0.03; // 30ms
+  const len = Math.floor(sr * dur);
+  const buffer = ctx.createBuffer(1, len, sr);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < len; i++) {
+    const env = 1 - (i / len);
+    // ruído curto com envelope -> click percusivo
+    data[i] = (Math.random() * 2 - 1) * env * 0.6;
   }
-
-  pronto = true;
-  estado.textContent = "Pronto ✔️";
-  startBtn.disabled = false;
+  return buffer;
 }
 
+async function carregarTudo() {
+  try {
+    audioCtx = new AudioContext();
+
+    // carregar sons das células
+    celulaEspecial.buffer = await carregarSom(audioCtx, celulaEspecial.som);
+    for (const c of opcoesNormais) {
+      c.buffer = await carregarSom(audioCtx, c.som);
+    }
+
+    // gerar click interno (não precisa de ficheiro)
+    clickBuffer = criarClickBuffer(audioCtx);
+
+    pronto = true;
+    estado.textContent = "Pronto ✔️";
+    startBtn.disabled = false;
+  } catch (e) {
+    console.error(e);
+    estado.textContent = "Erro ao carregar sons. Confirma nomes/pastas e que está em HTTP (GitHub Pages).";
+  }
+}
 carregarTudo();
 
 /* ==========================
-   UTILITÁRIOS
+   VISUAL
 ========================== */
 function limparVisual() {
   for (let i = 0; i < 4; i++) {
@@ -159,44 +159,99 @@ function limparVisual() {
   }
 }
 
-function pararAgendados() {
-  agendados.forEach(s => { try { s.stop(); } catch(e){} });
-  agendados = [];
+function setBotoesVisiveis(visible) {
+  reouvirBtn.style.display = visible ? "inline-block" : "none";
+  revelarBtn.style.display = visible ? "inline-block" : "none";
+}
+
+function setBotoesAtivos(active) {
+  startBtn.disabled = !active;
+  reouvirBtn.disabled = !active;
+  revelarBtn.disabled = !active;
 }
 
 /* ==========================
-   GERAR SEQUÊNCIA
+   PARAR SOMS
+========================== */
+function pararAgendados() {
+  agendados.forEach(s => { try { s.stop(); } catch(e){} });
+  agendados = [];
+  isPlaying = false;
+}
+
+function escolherAleatoria(lista) {
+  return lista[Math.floor(Math.random() * lista.length)];
+}
+
+function tirarAleatoria(array) {
+  const idx = Math.floor(Math.random() * array.length);
+  return array.splice(idx, 1)[0];
+}
+
+/* ==========================
+   GERAR SEQUÊNCIA COM REGRAS
+   - se sai especial: 2 normais + especial no fim
+   - senão: 4 normais
+   - nunca começar com 3 nem 8
 ========================== */
 function gerarSequencia() {
   const especialSai = Math.random() < 0.5;
 
   if (especialSai) {
     const copia = [...opcoesNormais];
-    const primeiraPool = copia.filter(c => c.id !== CELULA_PROIBIDA_PRIMEIRA_ID);
-    const primeira = primeiraPool[Math.floor(Math.random() * primeiraPool.length)];
-    copia.splice(copia.findIndex(c => c.id === primeira.id), 1);
-    const segunda = copia[Math.floor(Math.random() * copia.length)];
-    return [primeira, segunda, celulaEspecial];
+
+    const primeiraPool = copia.filter(c => !CELULAS_PROIBIDAS_PRIMEIRA.includes(c.id));
+    const primeira = escolherAleatoria(primeiraPool);
+    copia.splice(copia.findIndex(x => x.id === primeira.id), 1);
+
+    const segunda = tirarAleatoria(copia);
+
+    return [primeira, segunda, celulaEspecial]; // especial sempre no fim
   } else {
     const copia = [...opcoesNormais];
-    const primeiraPool = copia.filter(c => c.id !== CELULA_PROIBIDA_PRIMEIRA_ID);
-    const primeira = primeiraPool[Math.floor(Math.random() * primeiraPool.length)];
-    copia.splice(copia.findIndex(c => c.id === primeira.id), 1);
-    const segunda = copia.splice(Math.floor(Math.random() * copia.length),1)[0];
-    const terceira = copia.splice(Math.floor(Math.random() * copia.length),1)[0];
-    const quarta = copia.splice(Math.floor(Math.random() * copia.length),1)[0];
+
+    const primeiraPool = copia.filter(c => !CELULAS_PROIBIDAS_PRIMEIRA.includes(c.id));
+    const primeira = escolherAleatoria(primeiraPool);
+    copia.splice(copia.findIndex(x => x.id === primeira.id), 1);
+
+    const segunda = tirarAleatoria(copia);
+    const terceira = tirarAleatoria(copia);
+    const quarta = tirarAleatoria(copia);
+
     return [primeira, segunda, terceira, quarta];
   }
 }
 
 /* ==========================
-   TOCAR COM PULSAÇÃO
+   METRÓNOMO (count-in)
+   agenda 4 cliques antes de tocar a sequência
 ========================== */
-function tocarSequencia() {
+function agendarClick(atTime) {
+  const src = audioCtx.createBufferSource();
+  src.buffer = clickBuffer;
+  src.connect(audioCtx.destination);
+  src.start(atTime);
+  agendados.push(src);
+}
+
+function tocarComCountIn() {
+  if (!sequencia.length) return;
+
   pararAgendados();
   if (audioCtx.state === "suspended") audioCtx.resume();
 
-  let t = audioCtx.currentTime + 0.15;
+  isPlaying = true;
+
+  // base time com ligeira folga
+  let t0 = audioCtx.currentTime + 0.15;
+
+  // 4 cliques
+  for (let i = 0; i < COUNT_IN; i++) {
+    agendarClick(t0 + i * DURACAO_TEMPO);
+  }
+
+  // sequência começa após os 4 cliques
+  let t = t0 + COUNT_IN * DURACAO_TEMPO;
 
   sequencia.forEach(c => {
     const src = audioCtx.createBufferSource();
@@ -207,56 +262,70 @@ function tocarSequencia() {
     t += c.tempos * DURACAO_TEMPO;
   });
 
-  const totalTempos = sequencia.reduce((s,c)=>s+c.tempos,0);
+  // quando termina, reativa botões
+  const totalTempos = COUNT_IN + sequencia.reduce((s, c) => s + c.tempos, 0);
   const totalMs = (totalTempos * DURACAO_TEMPO + 0.2) * 1000;
 
   setTimeout(() => {
-    reouvirBtn.style.display = "inline-block";
-    revelarBtn.style.display = "inline-block";
-  }, totalMs);
+    isPlaying = false;
+    setBotoesAtivos(true);
+    setBotoesVisiveis(true);
+    // após mostrar resolução, o texto fica "Novo ditado"
+    if (resolucaoMostrada) startBtn.textContent = "Novo ditado";
+    else startBtn.textContent = "Iniciar Ditado";
+  }, Math.ceil(totalMs));
 }
 
 /* ==========================
    AÇÕES
 ========================== */
 function iniciarDitado() {
+  if (!pronto) return;
+
+  // se estava a tocar, parar
   pararAgendados();
 
+  // se a resolução estava visível, sai ao iniciar novo ditado
   if (resolucaoMostrada) {
     limparVisual();
     resolucaoMostrada = false;
   }
 
-  reouvirBtn.style.display = "none";
-  revelarBtn.style.display = "none";
-
+  // gerar NOVA sequência
   sequencia = gerarSequencia();
+
+  // ditado: não mostrar imagens durante reprodução
   limparVisual();
 
+  // estado UI
+  setBotoesVisiveis(false);
+  setBotoesAtivos(false);
   startBtn.textContent = "A tocar…";
-  startBtn.disabled = true;
 
-  tocarSequencia();
-
-  const totalTempos = sequencia.reduce((s,c)=>s+c.tempos,0);
-  const totalMs = (totalTempos * DURACAO_TEMPO + 0.3) * 1000;
-
-  setTimeout(() => {
-    startBtn.disabled = false;
-    startBtn.textContent = "Iniciar Ditado";
-  }, totalMs);
+  // tocar com metrónomo de entrada
+  tocarComCountIn();
 }
 
 function reouvir() {
-  iniciarDitado();
+  if (!sequencia.length) return;
+
+  // reouvir = mesma sequência, com 4 cliques antes
+  pararAgendados();
+  limparVisual();
+
+  setBotoesVisiveis(false);
+  setBotoesAtivos(false);
+  startBtn.textContent = "A tocar…";
+
+  tocarComCountIn();
 }
 
 function mostrarResolucao() {
   pararAgendados();
-  limparVisual();
 
-  sequencia.forEach((c,i)=>{
-    const img = document.getElementById("img"+i);
+  limparVisual();
+  sequencia.forEach((c, i) => {
+    const img = document.getElementById("img" + i);
     img.src = c.img;
     img.classList.add("ativa");
   });
