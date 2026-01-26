@@ -13,9 +13,7 @@
   /* LED do metrónomo */
   #metroWrap { display: flex; justify-content: center; align-items: center; gap: 10px; margin: 6px 0 14px; }
   #metroLed {
-    width: 18px;
-    height: 18px;
-    border-radius: 999px;
+    width: 18px; height: 18px; border-radius: 999px;
     background: rgba(51, 51, 170, 0.25);
     box-shadow: 0 0 0 rgba(51, 51, 170, 0);
     transform: scale(1);
@@ -25,6 +23,12 @@
     background: rgba(51, 51, 170, 0.95);
     box-shadow: 0 0 18px rgba(51, 51, 170, 0.9);
     transform: scale(1.35);
+  }
+  /* LED acentuado (tempo 1) */
+  #metroLed.strong {
+    background: rgba(255, 60, 60, 0.95);
+    box-shadow: 0 0 18px rgba(255, 60, 60, 0.9);
+    transform: scale(1.55);
   }
   #bpmLabel { font-size: 14px; opacity: 0.75; }
 
@@ -53,7 +57,7 @@
 
 <div id="metroWrap">
   <div id="metroLed" aria-label="Metrónomo"></div>
-  <div id="bpmLabel">Metrónomo: <strong>65 BPM</strong></div>
+  <div id="bpmLabel">Metrónomo: <strong>65 BPM</strong> (acento no tempo 1)</div>
 </div>
 
 <div class="linha">
@@ -76,8 +80,7 @@
 const BPM = 65;
 const DURACAO_TEMPO = 60 / BPM;
 const COUNT_IN = 4;
-
-// duração do flash do LED (em ms)
+const BEATS_PER_BAR = 4;      // compasso 4/4 (acento a cada 4 tempos)
 const LED_FLASH_MS = 90;
 
 /* ==========================
@@ -110,9 +113,10 @@ const opcoesNormais = [
 let sequencia = [];
 let pronto = false;
 let resolucaoMostrada = false;
-let agendados = [];      // BufferSource agendados (para parar)
-let ledTimers = [];      // timeouts do LED (para cancelar)
-let clickBuffer = null;
+let agendados = [];
+let ledTimers = [];
+let clickWeak = null;
+let clickStrong = null;
 
 const startBtn = document.getElementById("startBtn");
 const reouvirBtn = document.getElementById("reouvirBtn");
@@ -130,15 +134,17 @@ async function carregarSom(ctx, url) {
   return await ctx.decodeAudioData(buf);
 }
 
-function criarClick(ctx) {
+// click com parâmetros (para ter fraco/forte)
+function criarClick(ctx, {duration=0.03, gain=0.6, brightness=1.0} = {}) {
   const sr = ctx.sampleRate;
-  const dur = 0.03;
-  const len = Math.floor(sr * dur);
+  const len = Math.floor(sr * duration);
   const buffer = ctx.createBuffer(1, len, sr);
   const data = buffer.getChannelData(0);
   for (let i = 0; i < len; i++) {
     const env = 1 - (i / len);
-    data[i] = (Math.random() * 2 - 1) * env * 0.6;
+    // brilho controla "agudez" (mais energia nos primeiros samples)
+    const shape = Math.pow(env, 1 / brightness);
+    data[i] = (Math.random() * 2 - 1) * shape * gain;
   }
   return buffer;
 }
@@ -149,7 +155,8 @@ async function carregarTudo() {
     celulaEspecial.buffer = await carregarSom(audioCtx, celulaEspecial.som);
     for (const c of opcoesNormais) c.buffer = await carregarSom(audioCtx, c.som);
 
-    clickBuffer = criarClick(audioCtx);
+    clickWeak = criarClick(audioCtx, {duration: 0.03, gain: 0.55, brightness: 0.9});
+    clickStrong = criarClick(audioCtx, {duration: 0.04, gain: 0.85, brightness: 1.6});
 
     pronto = true;
     estado.textContent = "Pronto ✔️";
@@ -180,7 +187,7 @@ function pararAudio() {
 function pararLED() {
   ledTimers.forEach(t => clearTimeout(t));
   ledTimers = [];
-  led.classList.remove("on");
+  led.classList.remove("on", "strong");
 }
 
 function pararTudo() {
@@ -205,33 +212,36 @@ function gerarSequencia() {
   if (especial) {
     const segunda = tirar(copia);
     return [primeira, segunda, celulaEspecial]; // especial no fim
-  } else {
-    return [primeira, tirar(copia), tirar(copia), tirar(copia)];
   }
+  return [primeira, tirar(copia), tirar(copia), tirar(copia)];
 }
 
 /* ==========================
-   METRÓNOMO (áudio + LED)
-   - 4 cliques antes
-   - continua durante o exercício
+   METRÓNOMO (áudio + LED) com acento
 ========================== */
-function agendarClick(atTime) {
+function agendarClick(atTime, strong=false) {
   const src = audioCtx.createBufferSource();
-  src.buffer = clickBuffer;
+  src.buffer = strong ? clickStrong : clickWeak;
   src.connect(audioCtx.destination);
   src.start(atTime);
   agendados.push(src);
 }
 
 function agendarLEDPiscar(t0, totalBeats) {
-  // Converte "tempo do áudio" para "ms reais" a partir de agora:
-  // ms = (tBeat - audioCtx.currentTime) * 1000
   for (let i = 0; i < totalBeats; i++) {
+    const strong = (i % BEATS_PER_BAR === 0); // acento no tempo 1
     const tBeat = t0 + i * DURACAO_TEMPO;
     const msFromNow = Math.max(0, (tBeat - audioCtx.currentTime) * 1000);
 
-    const onTimer = setTimeout(() => led.classList.add("on"), msFromNow);
-    const offTimer = setTimeout(() => led.classList.remove("on"), msFromNow + LED_FLASH_MS);
+    const onTimer = setTimeout(() => {
+      led.classList.add("on");
+      if (strong) led.classList.add("strong");
+      else led.classList.remove("strong");
+    }, msFromNow);
+
+    const offTimer = setTimeout(() => {
+      led.classList.remove("on", "strong");
+    }, msFromNow + LED_FLASH_MS);
 
     ledTimers.push(onTimer, offTimer);
   }
@@ -246,15 +256,16 @@ function tocarComMetronomoContinuo() {
   const beatsSequencia = sequencia.reduce((s, c) => s + c.tempos, 0);
   const totalBeats = COUNT_IN + beatsSequencia;
 
-  // agenda metrónomo (áudio)
+  // metrónomo (áudio) + acento
   for (let i = 0; i < totalBeats; i++) {
-    agendarClick(t0 + i * DURACAO_TEMPO);
+    const strong = (i % BEATS_PER_BAR === 0);
+    agendarClick(t0 + i * DURACAO_TEMPO, strong);
   }
 
-  // agenda LED (piscar) simultâneo
+  // LED sincronizado (com acento)
   agendarLEDPiscar(t0, totalBeats);
 
-  // agenda sequência (após count-in)
+  // sequência (após count-in)
   let t = t0 + COUNT_IN * DURACAO_TEMPO;
   sequencia.forEach(c => {
     const s = audioCtx.createBufferSource();
@@ -268,7 +279,7 @@ function tocarComMetronomoContinuo() {
   // fim: reativar botões
   const totalMs = (totalBeats * DURACAO_TEMPO + 0.25) * 1000;
   setTimeout(() => {
-    pararLED(); // pára o LED no fim (fica desligado)
+    pararLED();
     reouvirBtn.style.display = "inline-block";
     revelarBtn.style.display = "inline-block";
     startBtn.disabled = false;
@@ -290,8 +301,6 @@ function iniciarDitado() {
   }
 
   sequencia = gerarSequencia();
-
-  // ditado: não mostrar imagens durante a reprodução
   limparVisual();
 
   reouvirBtn.style.display = "none";
@@ -306,8 +315,6 @@ function reouvir() {
   if (!sequencia.length) return;
 
   pararTudo();
-
-  // reouvir = mesma sequência, com count-in + metrónomo durante
   limparVisual();
 
   reouvirBtn.style.display = "none";
