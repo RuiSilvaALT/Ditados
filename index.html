@@ -34,10 +34,10 @@
 <p id="estado">A carregar sons…</p>
 
 <div class="linha">
-  <img id="img0" class="celula" alt="">
-  <img id="img1" class="celula" alt="">
-  <img id="img2" class="celula" alt="">
-  <img id="img3" class="celula" alt="">
+  <img id="img0" class="celula">
+  <img id="img1" class="celula">
+  <img id="img2" class="celula">
+  <img id="img3" class="celula">
 </div>
 
 <br>
@@ -48,14 +48,14 @@
 
 <script>
 /* ==========================
-   PULSAÇÃO / METRÓNOMO
+   TEMPO / METRÓNOMO
 ========================== */
 const BPM = 65;
-const DURACAO_TEMPO = 60 / BPM;   // segundos por tempo
-const COUNT_IN = 4;               // 4 cliques antes de cada reprodução
+const DURACAO_TEMPO = 60 / BPM;
+const COUNT_IN = 4;
 
 /* ==========================
-   WEB AUDIO
+   AUDIO
 ========================== */
 const AudioContext = window.AudioContext || window.webkitAudioContext;
 let audioCtx;
@@ -63,275 +63,136 @@ let audioCtx;
 /* ==========================
    CÉLULAS
 ========================== */
-const celulaEspecial = {
-  id: 1,
-  img: "imagens/img1.png",
-  som: "sons/som1.mp3",
-  tempos: 2 // única que vale 2
-};
-
-// nunca começar com 3 nem 8
-const CELULAS_PROIBIDAS_PRIMEIRA = [3, 8];
+const celulaEspecial = { id:1, img:"imagens/img1.png", som:"sons/som1.mp3", tempos:2 };
+const CELULAS_PROIBIDAS_PRIMEIRA = [3,8];
 
 const opcoesNormais = [
-  { id: 2,  img:"imagens/img2.png",  som:"sons/som2.mp3",  tempos: 1 },
-  { id: 3,  img:"imagens/img3.png",  som:"sons/som3.mp3",  tempos: 1 },
-  { id: 4,  img:"imagens/img4.png",  som:"sons/som4.mp3",  tempos: 1 },
-  { id: 5,  img:"imagens/img5.png",  som:"sons/som5.mp3",  tempos: 1 },
-  { id: 6,  img:"imagens/img6.png",  som:"sons/som6.mp3",  tempos: 1 },
-  { id: 7,  img:"imagens/img7.png",  som:"sons/som7.mp3",  tempos: 1 },
-  { id: 8,  img:"imagens/img8.png",  som:"sons/som8.mp3",  tempos: 1 },
-  { id: 9,  img:"imagens/img9.png",  som:"sons/som9.mp3",  tempos: 1 },
-  { id: 10, img:"imagens/img10.png", som:"sons/som10.mp3", tempos: 1 }
+  {id:2,img:"imagens/img2.png",som:"sons/som2.mp3",tempos:1},
+  {id:3,img:"imagens/img3.png",som:"sons/som3.mp3",tempos:1},
+  {id:4,img:"imagens/img4.png",som:"sons/som4.mp3",tempos:1},
+  {id:5,img:"imagens/img5.png",som:"sons/som5.mp3",tempos:1},
+  {id:6,img:"imagens/img6.png",som:"sons/som6.mp3",tempos:1},
+  {id:7,img:"imagens/img7.png",som:"sons/som7.mp3",tempos:1},
+  {id:8,img:"imagens/img8.png",som:"sons/som8.mp3",tempos:1},
+  {id:9,img:"imagens/img9.png",som:"sons/som9.mp3",tempos:1},
+  {id:10,img:"imagens/img10.png",som:"sons/som10.mp3",tempos:1}
 ];
 
 /* ==========================
-   STATE / UI
+   STATE
 ========================== */
-let sequencia = [];           // sequência atual (para reouvir)
-let pronto = false;
-let resolucaoMostrada = false;
-let agendados = [];           // BufferSource agendados (para parar)
-let clickBuffer = null;       // som do clique do metrónomo
-let isPlaying = false;
+let sequencia=[];
+let pronto=false;
+let resolucaoMostrada=false;
+let agendados=[];
+let clickBuffer=null;
 
-const startBtn = document.getElementById("startBtn");
-const reouvirBtn = document.getElementById("reouvirBtn");
-const revelarBtn = document.getElementById("revelarBtn");
-const estado = document.getElementById("estado");
+const startBtn=document.getElementById("startBtn");
+const reouvirBtn=document.getElementById("reouvirBtn");
+const revelarBtn=document.getElementById("revelarBtn");
+const estado=document.getElementById("estado");
 
 /* ==========================
-   LOAD AUDIO
+   LOAD
 ========================== */
-async function carregarSom(ctx, url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("Falha a carregar: " + url);
-  const buf = await res.arrayBuffer();
-  return await ctx.decodeAudioData(buf);
+async function carregarSom(ctx,url){
+  const r=await fetch(url); const b=await r.arrayBuffer();
+  return await ctx.decodeAudioData(b);
 }
-
-// cria um "click" simples (sem ficheiro) para o metrónomo
-function criarClickBuffer(ctx) {
-  const sr = ctx.sampleRate;
-  const dur = 0.03; // 30ms
-  const len = Math.floor(sr * dur);
-  const buffer = ctx.createBuffer(1, len, sr);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < len; i++) {
-    const env = 1 - (i / len);
-    // ruído curto com envelope -> click percusivo
-    data[i] = (Math.random() * 2 - 1) * env * 0.6;
-  }
-  return buffer;
+function criarClick(ctx){
+  const sr=ctx.sampleRate,len=sr*0.03;
+  const buf=ctx.createBuffer(1,len,sr);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*(1-i/len)*0.6;
+  return buf;
 }
-
-async function carregarTudo() {
-  try {
-    audioCtx = new AudioContext();
-
-    // carregar sons das células
-    celulaEspecial.buffer = await carregarSom(audioCtx, celulaEspecial.som);
-    for (const c of opcoesNormais) {
-      c.buffer = await carregarSom(audioCtx, c.som);
-    }
-
-    // gerar click interno (não precisa de ficheiro)
-    clickBuffer = criarClickBuffer(audioCtx);
-
-    pronto = true;
-    estado.textContent = "Pronto ✔️";
-    startBtn.disabled = false;
-  } catch (e) {
-    console.error(e);
-    estado.textContent = "Erro ao carregar sons. Confirma nomes/pastas e que está em HTTP (GitHub Pages).";
-  }
+async function carregarTudo(){
+  audioCtx=new AudioContext();
+  celulaEspecial.buffer=await carregarSom(audioCtx,celulaEspecial.som);
+  for(const c of opcoesNormais) c.buffer=await carregarSom(audioCtx,c.som);
+  clickBuffer=criarClick(audioCtx);
+  pronto=true; estado.textContent="Pronto ✔️"; startBtn.disabled=false;
 }
 carregarTudo();
 
 /* ==========================
-   VISUAL
+   HELPERS
 ========================== */
-function limparVisual() {
-  for (let i = 0; i < 4; i++) {
-    const img = document.getElementById("img" + i);
-    img.src = "";
-    img.classList.remove("ativa");
-  }
-}
-
-function setBotoesVisiveis(visible) {
-  reouvirBtn.style.display = visible ? "inline-block" : "none";
-  revelarBtn.style.display = visible ? "inline-block" : "none";
-}
-
-function setBotoesAtivos(active) {
-  startBtn.disabled = !active;
-  reouvirBtn.disabled = !active;
-  revelarBtn.disabled = !active;
-}
+function limparVisual(){ for(let i=0;i<4;i++){ const img=document.getElementById("img"+i); img.src=""; img.classList.remove("ativa"); } }
+function parar(){ agendados.forEach(s=>{try{s.stop();}catch{}}); agendados=[]; }
+function escolher(lista){ return lista[Math.floor(Math.random()*lista.length)]; }
+function tirar(lista){ return lista.splice(Math.floor(Math.random()*lista.length),1)[0]; }
 
 /* ==========================
-   PARAR SOMS
+   GERAR SEQUÊNCIA
 ========================== */
-function pararAgendados() {
-  agendados.forEach(s => { try { s.stop(); } catch(e){} });
-  agendados = [];
-  isPlaying = false;
-}
+function gerarSequencia(){
+  const especial=Math.random()<0.5;
+  const copia=[...opcoesNormais];
+  const primeiraPool=copia.filter(c=>!CELULAS_PROIBIDAS_PRIMEIRA.includes(c.id));
+  const primeira=escolher(primeiraPool);
+  copia.splice(copia.findIndex(x=>x.id===primeira.id),1);
 
-function escolherAleatoria(lista) {
-  return lista[Math.floor(Math.random() * lista.length)];
-}
-
-function tirarAleatoria(array) {
-  const idx = Math.floor(Math.random() * array.length);
-  return array.splice(idx, 1)[0];
-}
-
-/* ==========================
-   GERAR SEQUÊNCIA COM REGRAS
-   - se sai especial: 2 normais + especial no fim
-   - senão: 4 normais
-   - nunca começar com 3 nem 8
-========================== */
-function gerarSequencia() {
-  const especialSai = Math.random() < 0.5;
-
-  if (especialSai) {
-    const copia = [...opcoesNormais];
-
-    const primeiraPool = copia.filter(c => !CELULAS_PROIBIDAS_PRIMEIRA.includes(c.id));
-    const primeira = escolherAleatoria(primeiraPool);
-    copia.splice(copia.findIndex(x => x.id === primeira.id), 1);
-
-    const segunda = tirarAleatoria(copia);
-
-    return [primeira, segunda, celulaEspecial]; // especial sempre no fim
-  } else {
-    const copia = [...opcoesNormais];
-
-    const primeiraPool = copia.filter(c => !CELULAS_PROIBIDAS_PRIMEIRA.includes(c.id));
-    const primeira = escolherAleatoria(primeiraPool);
-    copia.splice(copia.findIndex(x => x.id === primeira.id), 1);
-
-    const segunda = tirarAleatoria(copia);
-    const terceira = tirarAleatoria(copia);
-    const quarta = tirarAleatoria(copia);
-
-    return [primeira, segunda, terceira, quarta];
+  if(especial){
+    const segunda=tirar(copia);
+    return [primeira,segunda,celulaEspecial];
+  }else{
+    return [primeira,tirar(copia),tirar(copia),tirar(copia)];
   }
 }
 
 /* ==========================
-   METRÓNOMO (count-in)
-   agenda 4 cliques antes de tocar a sequência
+   TOCAR COM METRÓNOMO CONTÍNUO
 ========================== */
-function agendarClick(atTime) {
-  const src = audioCtx.createBufferSource();
-  src.buffer = clickBuffer;
-  src.connect(audioCtx.destination);
-  src.start(atTime);
-  agendados.push(src);
-}
+function tocar(){
+  parar();
+  if(audioCtx.state==="suspended") audioCtx.resume();
 
-function tocarComCountIn() {
-  if (!sequencia.length) return;
+  let t0=audioCtx.currentTime+0.15;
+  const totalTempos=COUNT_IN+sequencia.reduce((s,c)=>s+c.tempos,0);
 
-  pararAgendados();
-  if (audioCtx.state === "suspended") audioCtx.resume();
-
-  isPlaying = true;
-
-  // base time com ligeira folga
-  let t0 = audioCtx.currentTime + 0.15;
-
-  // 4 cliques
-  for (let i = 0; i < COUNT_IN; i++) {
-    agendarClick(t0 + i * DURACAO_TEMPO);
+  // metrónomo (do count-in até ao fim)
+  for(let i=0;i<totalTempos;i++){
+    const c=audioCtx.createBufferSource();
+    c.buffer=clickBuffer;
+    c.connect(audioCtx.destination);
+    c.start(t0+i*DURACAO_TEMPO);
+    agendados.push(c);
   }
 
-  // sequência começa após os 4 cliques
-  let t = t0 + COUNT_IN * DURACAO_TEMPO;
-
-  sequencia.forEach(c => {
-    const src = audioCtx.createBufferSource();
-    src.buffer = c.buffer;
-    src.connect(audioCtx.destination);
-    src.start(t);
-    agendados.push(src);
-    t += c.tempos * DURACAO_TEMPO;
+  // sequência começa após count-in
+  let t=t0+COUNT_IN*DURACAO_TEMPO;
+  sequencia.forEach(c=>{
+    const s=audioCtx.createBufferSource();
+    s.buffer=c.buffer;
+    s.connect(audioCtx.destination);
+    s.start(t);
+    agendados.push(s);
+    t+=c.tempos*DURACAO_TEMPO;
   });
 
-  // quando termina, reativa botões
-  const totalTempos = COUNT_IN + sequencia.reduce((s, c) => s + c.tempos, 0);
-  const totalMs = (totalTempos * DURACAO_TEMPO + 0.2) * 1000;
-
-  setTimeout(() => {
-    isPlaying = false;
-    setBotoesAtivos(true);
-    setBotoesVisiveis(true);
-    // após mostrar resolução, o texto fica "Novo ditado"
-    if (resolucaoMostrada) startBtn.textContent = "Novo ditado";
-    else startBtn.textContent = "Iniciar Ditado";
-  }, Math.ceil(totalMs));
+  const totalMs=(totalTempos*DURACAO_TEMPO+0.2)*1000;
+  setTimeout(()=>{ reouvirBtn.style.display="inline-block"; revelarBtn.style.display="inline-block"; startBtn.disabled=false; startBtn.textContent="Iniciar Ditado"; }, totalMs);
 }
 
 /* ==========================
    AÇÕES
 ========================== */
-function iniciarDitado() {
-  if (!pronto) return;
-
-  // se estava a tocar, parar
-  pararAgendados();
-
-  // se a resolução estava visível, sai ao iniciar novo ditado
-  if (resolucaoMostrada) {
-    limparVisual();
-    resolucaoMostrada = false;
-  }
-
-  // gerar NOVA sequência
-  sequencia = gerarSequencia();
-
-  // ditado: não mostrar imagens durante reprodução
+function iniciarDitado(){
+  if(!pronto) return;
+  parar();
+  if(resolucaoMostrada){ limparVisual(); resolucaoMostrada=false; }
+  sequencia=gerarSequencia();
   limparVisual();
-
-  // estado UI
-  setBotoesVisiveis(false);
-  setBotoesAtivos(false);
-  startBtn.textContent = "A tocar…";
-
-  // tocar com metrónomo de entrada
-  tocarComCountIn();
+  reouvirBtn.style.display="none"; revelarBtn.style.display="none";
+  startBtn.disabled=true; startBtn.textContent="A tocar…";
+  tocar();
 }
-
-function reouvir() {
-  if (!sequencia.length) return;
-
-  // reouvir = mesma sequência, com 4 cliques antes
-  pararAgendados();
-  limparVisual();
-
-  setBotoesVisiveis(false);
-  setBotoesAtivos(false);
-  startBtn.textContent = "A tocar…";
-
-  tocarComCountIn();
-}
-
-function mostrarResolucao() {
-  pararAgendados();
-
-  limparVisual();
-  sequencia.forEach((c, i) => {
-    const img = document.getElementById("img" + i);
-    img.src = c.img;
-    img.classList.add("ativa");
-  });
-
-  resolucaoMostrada = true;
-  startBtn.textContent = "Novo ditado";
+function reouvir(){ iniciarDitado(); }
+function mostrarResolucao(){
+  parar(); limparVisual();
+  sequencia.forEach((c,i)=>{ const img=document.getElementById("img"+i); img.src=c.img; img.classList.add("ativa"); });
+  resolucaoMostrada=true; startBtn.textContent="Novo ditado";
 }
 </script>
 
