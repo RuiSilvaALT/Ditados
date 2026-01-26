@@ -8,7 +8,25 @@
 <style>
   body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f0f8ff; }
   h1 { color: #3333aa; }
-  #estado { margin: 8px 0 16px; }
+  #estado { margin: 8px 0 10px; }
+
+  /* LED do metrónomo */
+  #metroWrap { display: flex; justify-content: center; align-items: center; gap: 10px; margin: 6px 0 14px; }
+  #metroLed {
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: rgba(51, 51, 170, 0.25);
+    box-shadow: 0 0 0 rgba(51, 51, 170, 0);
+    transform: scale(1);
+    transition: transform 0.06s ease-out, box-shadow 0.06s ease-out, background 0.06s ease-out;
+  }
+  #metroLed.on {
+    background: rgba(51, 51, 170, 0.95);
+    box-shadow: 0 0 18px rgba(51, 51, 170, 0.9);
+    transform: scale(1.35);
+  }
+  #bpmLabel { font-size: 14px; opacity: 0.75; }
 
   .linha { display: flex; justify-content: center; gap: 15px; margin-top: 12px; flex-wrap: wrap; }
   .celula {
@@ -33,11 +51,16 @@
 <h1>Ditado Rítmico</h1>
 <p id="estado">A carregar sons…</p>
 
+<div id="metroWrap">
+  <div id="metroLed" aria-label="Metrónomo"></div>
+  <div id="bpmLabel">Metrónomo: <strong>65 BPM</strong></div>
+</div>
+
 <div class="linha">
-  <img id="img0" class="celula">
-  <img id="img1" class="celula">
-  <img id="img2" class="celula">
-  <img id="img3" class="celula">
+  <img id="img0" class="celula" alt="">
+  <img id="img1" class="celula" alt="">
+  <img id="img2" class="celula" alt="">
+  <img id="img3" class="celula" alt="">
 </div>
 
 <br>
@@ -54,6 +77,9 @@ const BPM = 65;
 const DURACAO_TEMPO = 60 / BPM;
 const COUNT_IN = 4;
 
+// duração do flash do LED (em ms)
+const LED_FLASH_MS = 90;
+
 /* ==========================
    AUDIO
 ========================== */
@@ -63,136 +89,247 @@ let audioCtx;
 /* ==========================
    CÉLULAS
 ========================== */
-const celulaEspecial = { id:1, img:"imagens/img1.png", som:"sons/som1.mp3", tempos:2 };
-const CELULAS_PROIBIDAS_PRIMEIRA = [3,8];
+const celulaEspecial = { id: 1, img: "imagens/img1.png", som: "sons/som1.mp3", tempos: 2 };
+const CELULAS_PROIBIDAS_PRIMEIRA = [3, 8];
 
 const opcoesNormais = [
-  {id:2,img:"imagens/img2.png",som:"sons/som2.mp3",tempos:1},
-  {id:3,img:"imagens/img3.png",som:"sons/som3.mp3",tempos:1},
-  {id:4,img:"imagens/img4.png",som:"sons/som4.mp3",tempos:1},
-  {id:5,img:"imagens/img5.png",som:"sons/som5.mp3",tempos:1},
-  {id:6,img:"imagens/img6.png",som:"sons/som6.mp3",tempos:1},
-  {id:7,img:"imagens/img7.png",som:"sons/som7.mp3",tempos:1},
-  {id:8,img:"imagens/img8.png",som:"sons/som8.mp3",tempos:1},
-  {id:9,img:"imagens/img9.png",som:"sons/som9.mp3",tempos:1},
-  {id:10,img:"imagens/img10.png",som:"sons/som10.mp3",tempos:1}
+  { id: 2,  img:"imagens/img2.png",  som:"sons/som2.mp3",  tempos: 1 },
+  { id: 3,  img:"imagens/img3.png",  som:"sons/som3.mp3",  tempos: 1 },
+  { id: 4,  img:"imagens/img4.png",  som:"sons/som4.mp3",  tempos: 1 },
+  { id: 5,  img:"imagens/img5.png",  som:"sons/som5.mp3",  tempos: 1 },
+  { id: 6,  img:"imagens/img6.png",  som:"sons/som6.mp3",  tempos: 1 },
+  { id: 7,  img:"imagens/img7.png",  som:"sons/som7.mp3",  tempos: 1 },
+  { id: 8,  img:"imagens/img8.png",  som:"sons/som8.mp3",  tempos: 1 },
+  { id: 9,  img:"imagens/img9.png",  som:"sons/som9.mp3",  tempos: 1 },
+  { id: 10, img:"imagens/img10.png", som:"sons/som10.mp3", tempos: 1 }
 ];
 
 /* ==========================
-   STATE
+   STATE / UI
 ========================== */
-let sequencia=[];
-let pronto=false;
-let resolucaoMostrada=false;
-let agendados=[];
-let clickBuffer=null;
+let sequencia = [];
+let pronto = false;
+let resolucaoMostrada = false;
+let agendados = [];      // BufferSource agendados (para parar)
+let ledTimers = [];      // timeouts do LED (para cancelar)
+let clickBuffer = null;
 
-const startBtn=document.getElementById("startBtn");
-const reouvirBtn=document.getElementById("reouvirBtn");
-const revelarBtn=document.getElementById("revelarBtn");
-const estado=document.getElementById("estado");
+const startBtn = document.getElementById("startBtn");
+const reouvirBtn = document.getElementById("reouvirBtn");
+const revelarBtn = document.getElementById("revelarBtn");
+const estado = document.getElementById("estado");
+const led = document.getElementById("metroLed");
 
 /* ==========================
    LOAD
 ========================== */
-async function carregarSom(ctx,url){
-  const r=await fetch(url); const b=await r.arrayBuffer();
-  return await ctx.decodeAudioData(b);
+async function carregarSom(ctx, url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("Falha a carregar: " + url);
+  const buf = await res.arrayBuffer();
+  return await ctx.decodeAudioData(buf);
 }
-function criarClick(ctx){
-  const sr=ctx.sampleRate,len=sr*0.03;
-  const buf=ctx.createBuffer(1,len,sr);
-  const d=buf.getChannelData(0);
-  for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*(1-i/len)*0.6;
-  return buf;
+
+function criarClick(ctx) {
+  const sr = ctx.sampleRate;
+  const dur = 0.03;
+  const len = Math.floor(sr * dur);
+  const buffer = ctx.createBuffer(1, len, sr);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < len; i++) {
+    const env = 1 - (i / len);
+    data[i] = (Math.random() * 2 - 1) * env * 0.6;
+  }
+  return buffer;
 }
-async function carregarTudo(){
-  audioCtx=new AudioContext();
-  celulaEspecial.buffer=await carregarSom(audioCtx,celulaEspecial.som);
-  for(const c of opcoesNormais) c.buffer=await carregarSom(audioCtx,c.som);
-  clickBuffer=criarClick(audioCtx);
-  pronto=true; estado.textContent="Pronto ✔️"; startBtn.disabled=false;
+
+async function carregarTudo() {
+  try {
+    audioCtx = new AudioContext();
+    celulaEspecial.buffer = await carregarSom(audioCtx, celulaEspecial.som);
+    for (const c of opcoesNormais) c.buffer = await carregarSom(audioCtx, c.som);
+
+    clickBuffer = criarClick(audioCtx);
+
+    pronto = true;
+    estado.textContent = "Pronto ✔️";
+    startBtn.disabled = false;
+  } catch (e) {
+    console.error(e);
+    estado.textContent = "Erro ao carregar sons. Confirma nomes/pastas e que está em HTTP (GitHub Pages).";
+  }
 }
 carregarTudo();
 
 /* ==========================
    HELPERS
 ========================== */
-function limparVisual(){ for(let i=0;i<4;i++){ const img=document.getElementById("img"+i); img.src=""; img.classList.remove("ativa"); } }
-function parar(){ agendados.forEach(s=>{try{s.stop();}catch{}}); agendados=[]; }
-function escolher(lista){ return lista[Math.floor(Math.random()*lista.length)]; }
-function tirar(lista){ return lista.splice(Math.floor(Math.random()*lista.length),1)[0]; }
+function limparVisual() {
+  for (let i = 0; i < 4; i++) {
+    const img = document.getElementById("img" + i);
+    img.src = "";
+    img.classList.remove("ativa");
+  }
+}
+
+function pararAudio() {
+  agendados.forEach(s => { try { s.stop(); } catch(e){} });
+  agendados = [];
+}
+
+function pararLED() {
+  ledTimers.forEach(t => clearTimeout(t));
+  ledTimers = [];
+  led.classList.remove("on");
+}
+
+function pararTudo() {
+  pararAudio();
+  pararLED();
+}
+
+function escolher(lista) { return lista[Math.floor(Math.random() * lista.length)]; }
+function tirar(lista) { return lista.splice(Math.floor(Math.random() * lista.length), 1)[0]; }
 
 /* ==========================
    GERAR SEQUÊNCIA
 ========================== */
-function gerarSequencia(){
-  const especial=Math.random()<0.5;
-  const copia=[...opcoesNormais];
-  const primeiraPool=copia.filter(c=>!CELULAS_PROIBIDAS_PRIMEIRA.includes(c.id));
-  const primeira=escolher(primeiraPool);
-  copia.splice(copia.findIndex(x=>x.id===primeira.id),1);
+function gerarSequencia() {
+  const especial = Math.random() < 0.5;
 
-  if(especial){
-    const segunda=tirar(copia);
-    return [primeira,segunda,celulaEspecial];
-  }else{
-    return [primeira,tirar(copia),tirar(copia),tirar(copia)];
+  const copia = [...opcoesNormais];
+  const primeiraPool = copia.filter(c => !CELULAS_PROIBIDAS_PRIMEIRA.includes(c.id));
+  const primeira = escolher(primeiraPool);
+  copia.splice(copia.findIndex(x => x.id === primeira.id), 1);
+
+  if (especial) {
+    const segunda = tirar(copia);
+    return [primeira, segunda, celulaEspecial]; // especial no fim
+  } else {
+    return [primeira, tirar(copia), tirar(copia), tirar(copia)];
   }
 }
 
 /* ==========================
-   TOCAR COM METRÓNOMO CONTÍNUO
+   METRÓNOMO (áudio + LED)
+   - 4 cliques antes
+   - continua durante o exercício
 ========================== */
-function tocar(){
-  parar();
-  if(audioCtx.state==="suspended") audioCtx.resume();
+function agendarClick(atTime) {
+  const src = audioCtx.createBufferSource();
+  src.buffer = clickBuffer;
+  src.connect(audioCtx.destination);
+  src.start(atTime);
+  agendados.push(src);
+}
 
-  let t0=audioCtx.currentTime+0.15;
-  const totalTempos=COUNT_IN+sequencia.reduce((s,c)=>s+c.tempos,0);
+function agendarLEDPiscar(t0, totalBeats) {
+  // Converte "tempo do áudio" para "ms reais" a partir de agora:
+  // ms = (tBeat - audioCtx.currentTime) * 1000
+  for (let i = 0; i < totalBeats; i++) {
+    const tBeat = t0 + i * DURACAO_TEMPO;
+    const msFromNow = Math.max(0, (tBeat - audioCtx.currentTime) * 1000);
 
-  // metrónomo (do count-in até ao fim)
-  for(let i=0;i<totalTempos;i++){
-    const c=audioCtx.createBufferSource();
-    c.buffer=clickBuffer;
-    c.connect(audioCtx.destination);
-    c.start(t0+i*DURACAO_TEMPO);
-    agendados.push(c);
+    const onTimer = setTimeout(() => led.classList.add("on"), msFromNow);
+    const offTimer = setTimeout(() => led.classList.remove("on"), msFromNow + LED_FLASH_MS);
+
+    ledTimers.push(onTimer, offTimer);
+  }
+}
+
+function tocarComMetronomoContinuo() {
+  pararTudo();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+
+  const t0 = audioCtx.currentTime + 0.20;
+
+  const beatsSequencia = sequencia.reduce((s, c) => s + c.tempos, 0);
+  const totalBeats = COUNT_IN + beatsSequencia;
+
+  // agenda metrónomo (áudio)
+  for (let i = 0; i < totalBeats; i++) {
+    agendarClick(t0 + i * DURACAO_TEMPO);
   }
 
-  // sequência começa após count-in
-  let t=t0+COUNT_IN*DURACAO_TEMPO;
-  sequencia.forEach(c=>{
-    const s=audioCtx.createBufferSource();
-    s.buffer=c.buffer;
+  // agenda LED (piscar) simultâneo
+  agendarLEDPiscar(t0, totalBeats);
+
+  // agenda sequência (após count-in)
+  let t = t0 + COUNT_IN * DURACAO_TEMPO;
+  sequencia.forEach(c => {
+    const s = audioCtx.createBufferSource();
+    s.buffer = c.buffer;
     s.connect(audioCtx.destination);
     s.start(t);
     agendados.push(s);
-    t+=c.tempos*DURACAO_TEMPO;
+    t += c.tempos * DURACAO_TEMPO;
   });
 
-  const totalMs=(totalTempos*DURACAO_TEMPO+0.2)*1000;
-  setTimeout(()=>{ reouvirBtn.style.display="inline-block"; revelarBtn.style.display="inline-block"; startBtn.disabled=false; startBtn.textContent="Iniciar Ditado"; }, totalMs);
+  // fim: reativar botões
+  const totalMs = (totalBeats * DURACAO_TEMPO + 0.25) * 1000;
+  setTimeout(() => {
+    pararLED(); // pára o LED no fim (fica desligado)
+    reouvirBtn.style.display = "inline-block";
+    revelarBtn.style.display = "inline-block";
+    startBtn.disabled = false;
+    startBtn.textContent = "Iniciar Ditado";
+  }, Math.ceil(totalMs));
 }
 
 /* ==========================
    AÇÕES
 ========================== */
-function iniciarDitado(){
-  if(!pronto) return;
-  parar();
-  if(resolucaoMostrada){ limparVisual(); resolucaoMostrada=false; }
-  sequencia=gerarSequencia();
+function iniciarDitado() {
+  if (!pronto) return;
+
+  pararTudo();
+
+  if (resolucaoMostrada) {
+    limparVisual();
+    resolucaoMostrada = false;
+  }
+
+  sequencia = gerarSequencia();
+
+  // ditado: não mostrar imagens durante a reprodução
   limparVisual();
-  reouvirBtn.style.display="none"; revelarBtn.style.display="none";
-  startBtn.disabled=true; startBtn.textContent="A tocar…";
-  tocar();
+
+  reouvirBtn.style.display = "none";
+  revelarBtn.style.display = "none";
+  startBtn.disabled = true;
+  startBtn.textContent = "A tocar…";
+
+  tocarComMetronomoContinuo();
 }
-function reouvir(){ iniciarDitado(); }
-function mostrarResolucao(){
-  parar(); limparVisual();
-  sequencia.forEach((c,i)=>{ const img=document.getElementById("img"+i); img.src=c.img; img.classList.add("ativa"); });
-  resolucaoMostrada=true; startBtn.textContent="Novo ditado";
+
+function reouvir() {
+  if (!sequencia.length) return;
+
+  pararTudo();
+
+  // reouvir = mesma sequência, com count-in + metrónomo durante
+  limparVisual();
+
+  reouvirBtn.style.display = "none";
+  revelarBtn.style.display = "none";
+  startBtn.disabled = true;
+  startBtn.textContent = "A tocar…";
+
+  tocarComMetronomoContinuo();
+}
+
+function mostrarResolucao() {
+  pararTudo();
+  limparVisual();
+
+  sequencia.forEach((c, i) => {
+    const img = document.getElementById("img" + i);
+    img.src = c.img;
+    img.classList.add("ativa");
+  });
+
+  resolucaoMostrada = true;
+  startBtn.textContent = "Novo ditado";
 }
 </script>
 
